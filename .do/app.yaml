@@ -1,0 +1,22 @@
+name: researchrabbit-backend
+services:
+  - name: api
+    github:
+      branch: main
+      deploy_on_push: true
+    build_command: pip install -r requirements.txt
+    run_command: gunicorn app.main:app -w 2 -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:8080
+    environment_slug: python
+    instance_size_slug: apps-s-1vcpu-0.5gb
+    instance_count: 1
+    http_port: 8080
+    envs:
+      - key: DO_INFERENCE_TOKEN
+        scope: RUN_TIME
+        type: SECRET
+      - key: EMBEDDING_MODEL
+        scope: RUN_TIME
+        value: qwen3-embedding-0.6b
+      - key: ALLOWED_ORIGINS
+        scope: RUN_TIME
+        value: "chrome-extension://*"
