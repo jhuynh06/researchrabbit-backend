@@ -17,7 +17,7 @@ class Settings(BaseSettings):
 
     # Chat / Q&A settings (DO Inference Router is OpenAI-compatible).
     do_chat_url: str = "https://inference.do-ai.run/v1/chat/completions"
-    chat_model: str = "anthropic-claude-haiku-4.5"
+    chat_model: str = "alibaba-qwen3-32b"
     qa_timeout: float = 45.0
     qa_max_tokens: int = 320
     qa_temperature: float = 0.2

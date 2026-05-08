@@ -13,7 +13,7 @@ from app.schemas import QAMessage
 SETTINGS = SimpleNamespace(
     do_inference_token="test-token",
     do_chat_url="https://inference.do-ai.run/v1/chat/completions",
-    chat_model="llama3.3-70b-instruct",
+    chat_model="alibaba-qwen3-32b",
     qa_timeout=10.0,
     qa_max_tokens=200,
     qa_temperature=0.2,
@@ -86,7 +86,7 @@ def test_answer_question_caches_page_text_on_first_call(_mock_sources, mock_post
     # Verify payload sent to DO.
     call_kwargs = mock_post.call_args.kwargs
     sent = call_kwargs["json"]
-    assert sent["model"] == "llama3.3-70b-instruct"
+    assert sent["model"] == "alibaba-qwen3-32b"
     assert sent["temperature"] == 0.2
     # System prompt + page-content system turn + user question.
     roles = [m["role"] for m in sent["messages"]]
