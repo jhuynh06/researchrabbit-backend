@@ -22,8 +22,12 @@ import httpx
 from fastapi import HTTPException
 
 from app.config import get_settings
+from app.chunking import chunk_text
+from app.embeddings import embed_texts
 from app.preprocessing import preprocess_text
-from app.schemas import QAMessage
+from app.schemas import QAMessage, QASource
+
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -208,7 +212,7 @@ def answer_question(
     page_id: str,
     page_text: str | None,
     history: list[QAMessage],
-) -> tuple[str, bool]:
+) -> tuple[str, bool, list[QASource]]:
     settings = get_settings()
     effective_text, was_cached = _resolve_page_text(page_id, page_text)
     messages = _build_messages(
@@ -219,4 +223,26 @@ def answer_question(
         max_history_messages=settings.qa_max_history_messages,
     )
     answer = _call_chat_completions(messages)
-    return answer, was_cached
+    sources = _find_sources(question, effective_text, top_k=3)
+    return answer, was_cached, sources
+
+
+def _find_sources(question: str, page_text: str, top_k: int = 3) -> list[QASource]:
+    """Find the chunks most relevant to the question via embedding similarity."""
+    settings = get_settings()
+    try:
+        chunks = chunk_text(page_text, max_words=settings.max_chunk_words, overlap_words=settings.overlap_words)
+        if not chunks:
+            return []
+        texts = [question, *[c.text for c in chunks]]
+        embeddings = embed_texts(texts)
+        scores = np.dot(embeddings[1:], embeddings[0])
+        top_indices = np.argsort(scores)[::-1][:top_k]
+        return [
+            QASource(text=chunks[i].text, score=round(float(scores[i]), 4))
+            for i in top_indices
+            if scores[i] > 0.3
+        ]
+    except Exception:
+        logger.exception("Failed to find sources")
+        return []

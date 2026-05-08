@@ -20,6 +20,8 @@ SETTINGS = SimpleNamespace(
     qa_max_page_chars=60000,
     qa_max_history_messages=12,
     qa_page_cache_size=16,
+    max_chunk_words=850,
+    overlap_words=125,
 )
 
 
@@ -65,10 +67,11 @@ def test_page_cache_get_updates_recency():
 
 
 @patch("app.qa.httpx.post")
-def test_answer_question_caches_page_text_on_first_call(mock_post):
+@patch("app.qa._find_sources", return_value=[])
+def test_answer_question_caches_page_text_on_first_call(_mock_sources, mock_post):
     mock_post.return_value = _mock_chat_response("42 samples.")
 
-    answer, cached = answer_question(
+    answer, cached, sources = answer_question(
         question="How many samples?",
         page_id="https://example.com/paper",
         page_text="The study uses 42 samples from the benchmark dataset." * 5,
@@ -95,7 +98,8 @@ def test_answer_question_caches_page_text_on_first_call(mock_post):
 
 
 @patch("app.qa.httpx.post")
-def test_answer_question_reuses_cached_page_text(mock_post):
+@patch("app.qa._find_sources", return_value=[])
+def test_answer_question_reuses_cached_page_text(_mock_sources, mock_post):
     mock_post.return_value = _mock_chat_response("First answer.")
     answer_question(
         question="Q1",
@@ -105,7 +109,7 @@ def test_answer_question_reuses_cached_page_text(mock_post):
     )
 
     mock_post.return_value = _mock_chat_response("Second answer.")
-    answer, cached = answer_question(
+    answer, cached, sources = answer_question(
         question="Q2",
         page_id="https://example.com/paper",
         page_text=None,
@@ -173,7 +177,8 @@ def test_answer_question_empty_response_raises(mock_post):
 
 
 @patch("app.qa.httpx.post")
-def test_answer_question_truncates_long_page(mock_post):
+@patch("app.qa._find_sources", return_value=[])
+def test_answer_question_truncates_long_page(_mock_sources, mock_post):
     mock_post.return_value = _mock_chat_response("ok")
     long_page = "A" * (SETTINGS.qa_max_page_chars + 5000)
     answer_question(
@@ -189,7 +194,8 @@ def test_answer_question_truncates_long_page(mock_post):
 
 
 @patch("app.qa.httpx.post")
-def test_answer_question_bounds_history(mock_post):
+@patch("app.qa._find_sources", return_value=[])
+def test_answer_question_bounds_history(_mock_sources, mock_post):
     mock_post.return_value = _mock_chat_response("ok")
     history = [
         QAMessage(role="user" if i % 2 == 0 else "assistant", content=f"m{i}")

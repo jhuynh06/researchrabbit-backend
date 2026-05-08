@@ -54,10 +54,10 @@ def qa_endpoint(request: QARequest) -> QAResponse:
             detail="Extracted page text is too short. Open an HTML research page and try again.",
         )
 
-    answer, cached = answer_question(
+    answer, cached, sources = answer_question(
         question=request.question,
         page_id=request.page_id,
         page_text=request.page_text,
         history=request.history,
     )
-    return QAResponse(answer=answer, cached=cached)
+    return QAResponse(answer=answer, cached=cached, sources=sources)

@@ -56,6 +56,12 @@ class QARequest(BaseModel):
         return stripped or None
 
 
+class QASource(BaseModel):
+    text: str
+    score: float
+
+
 class QAResponse(BaseModel):
     answer: str
     cached: bool
+    sources: list[QASource] = Field(default_factory=list)
