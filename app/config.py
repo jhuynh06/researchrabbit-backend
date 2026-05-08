@@ -15,6 +15,16 @@ class Settings(BaseSettings):
     max_top_k: int = 10
     allowed_origins: str = "chrome-extension://*"
 
+    # Chat / Q&A settings (DO Inference Router is OpenAI-compatible).
+    do_chat_url: str = "https://inference.do-ai.run/v1/chat/completions"
+    chat_model: str = "llama3.3-70b-instruct"
+    qa_timeout: float = 45.0
+    qa_max_tokens: int = 320
+    qa_temperature: float = 0.2
+    qa_max_page_chars: int = 60000
+    qa_max_history_messages: int = 12
+    qa_page_cache_size: int = 128
+
 
 @lru_cache
 def get_settings() -> Settings:

@@ -17,6 +17,27 @@ services:
       - key: EMBEDDING_MODEL
         scope: RUN_TIME
         value: qwen3-embedding-0.6b
+      - key: CHAT_MODEL
+        scope: RUN_TIME
+        value: llama3.3-70b-instruct
+      - key: DO_CHAT_URL
+        scope: RUN_TIME
+        value: https://inference.do-ai.run/v1/chat/completions
+      - key: QA_MAX_TOKENS
+        scope: RUN_TIME
+        value: "320"
+      - key: QA_TEMPERATURE
+        scope: RUN_TIME
+        value: "0.2"
+      - key: QA_MAX_PAGE_CHARS
+        scope: RUN_TIME
+        value: "60000"
+      - key: QA_MAX_HISTORY_MESSAGES
+        scope: RUN_TIME
+        value: "12"
+      - key: QA_PAGE_CACHE_SIZE
+        scope: RUN_TIME
+        value: "128"
       - key: ALLOWED_ORIGINS
         scope: RUN_TIME
         value: "chrome-extension://*"
