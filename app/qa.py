@@ -15,7 +15,10 @@ Design:
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
+import re
+import unicodedata
 from collections import OrderedDict
 
 import httpx
@@ -36,9 +39,16 @@ SYSTEM_PROMPT = (
     "You are a research assistant answering questions strictly about the "
     "document the user has open (academic paper, article, or docs page). "
     "The full document content is provided once below as PAGE CONTENT.\n\n"
-    "Rules for every reply:\n"
+    "Output a single JSON object with EXACTLY two keys and nothing else:\n"
+    '  "answer": your reply text (plain text, no markdown)\n'
+    '  "quote":  one verbatim excerpt from PAGE CONTENT that supports the '
+    'answer, copied character-for-character. Use "" if no supporting quote '
+    "exists.\n\n"
+    'Example: {"answer": "Yes, the authors found X.", "quote": "We found '
+    'that X holds across all three datasets."}\n\n'
+    "Rules for the answer field:\n"
     "1. Answer only from PAGE CONTENT. If the answer is not present, reply "
-    '"The page does not cover that." and stop.\n'
+    '"The page does not cover that." and set quote to "".\n'
     "2. Be concise. 1-2 sentences for most questions, up to 4 only for "
     "comparisons or enumerations.\n"
     "3. No preamble, no restating the question, no sign-offs, no filler "
@@ -47,9 +57,12 @@ SYSTEM_PROMPT = (
     "claims) over vague paraphrase.\n"
     '5. For yes/no questions, lead with "Yes" or "No" then one supporting '
     "clause.\n"
-    "6. Do not hedge or speculate. Do not invent citations.\n"
-    "7. Plain text only. Use a short bulleted list only when the user "
-    "explicitly asks for a list of 3+ items."
+    "6. Do not hedge or speculate. Do not invent citations.\n\n"
+    "Rules for the quote field:\n"
+    "- The quote MUST appear in PAGE CONTENT exactly as written there. Do "
+    "not paraphrase, summarize, or stitch distant passages together.\n"
+    "- Aim for one full sentence (roughly 10-40 words).\n"
+    "- Do not add ellipses, brackets, or any text not in the source."
 )
 
 
@@ -222,9 +235,100 @@ def answer_question(
         max_page_chars=settings.qa_max_page_chars,
         max_history_messages=settings.qa_max_history_messages,
     )
-    answer = _call_chat_completions(messages)
-    sources = _find_sources(question, effective_text, top_k=3)
-    return answer, was_cached, sources
+    raw = _call_chat_completions(messages)
+    answer_text, quote = _parse_answer_response(raw)
+
+    sources: list[QASource] = []
+    quote_source = _build_quote_source(quote, effective_text) if quote else None
+    if quote_source is not None:
+        sources.append(quote_source)
+
+    refined = _find_sources(question, effective_text, top_k=3)
+    seen = {_normalize_for_match(s.text) for s in sources}
+    for src in refined:
+        key = _normalize_for_match(src.text)
+        if key in seen:
+            continue
+        sources.append(src)
+        seen.add(key)
+        if len(sources) >= 3:
+            break
+
+    return answer_text, was_cached, sources
+
+
+_JSON_FENCE_RE = re.compile(r"^```(?:json)?\s*|\s*```$", flags=re.IGNORECASE | re.MULTILINE)
+_JSON_OBJECT_RE = re.compile(r"\{.*\}", flags=re.DOTALL)
+
+
+def _parse_answer_response(raw: str) -> tuple[str, str]:
+    """Return (answer_text, quote). Falls back to (raw, "") on parse failure."""
+    text = raw.strip()
+    stripped = _JSON_FENCE_RE.sub("", text).strip()
+
+    for candidate in (stripped, text):
+        if not candidate:
+            continue
+        try:
+            data = json.loads(candidate)
+        except json.JSONDecodeError:
+            data = None
+        if isinstance(data, dict):
+            answer = str(data.get("answer", "")).strip()
+            quote = str(data.get("quote", "")).strip()
+            if answer:
+                return answer, quote
+
+    match = _JSON_OBJECT_RE.search(text)
+    if match:
+        try:
+            data = json.loads(match.group(0))
+            if isinstance(data, dict):
+                answer = str(data.get("answer", "")).strip()
+                quote = str(data.get("quote", "")).strip()
+                if answer:
+                    return answer, quote
+        except json.JSONDecodeError:
+            pass
+
+    return raw.strip(), ""
+
+
+def _normalize_for_match(text: str) -> str:
+    normalized = unicodedata.normalize("NFKC", text).lower()
+    return re.sub(r"\s+", " ", normalized).strip()
+
+
+def _build_quote_source(quote: str, page_text: str) -> QASource | None:
+    """Locate the LLM-emitted quote inside the page and return a tight source."""
+    settings = get_settings()
+    if not quote or len(quote.split()) < 4:
+        return None
+
+    norm_page = _normalize_for_match(page_text)
+    norm_quote = _normalize_for_match(quote)
+    if not norm_quote or norm_quote not in norm_page:
+        # Relax: drop common trailing punctuation the LLM may have appended.
+        trimmed = norm_quote.rstrip(".,;:!?\"')")
+        if not trimmed or trimmed not in norm_page:
+            return None
+
+    prefix, suffix = extract_anchors(quote, settings.qa_anchor_words)
+    return QASource(
+        text=quote,
+        score=1.0,
+        chunk_id=-1,
+        prefix=prefix,
+        suffix=suffix,
+    )
+
+
+_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+(?=[A-Z\"“‘(])")
+
+
+def _split_sentences(text: str, min_words: int = 5) -> list[str]:
+    parts = _SENTENCE_SPLIT_RE.split(text)
+    return [p.strip() for p in parts if len(p.split()) >= min_words]
 
 
 def extract_anchors(chunk_text_value: str, anchor_words: int) -> tuple[str, str]:
@@ -246,26 +350,69 @@ def extract_anchors(chunk_text_value: str, anchor_words: int) -> tuple[str, str]
 
 
 def _find_sources(question: str, page_text: str, top_k: int = 3) -> list[QASource]:
-    """Find the chunks most relevant to the question via embedding similarity."""
+    """Rank chunks by similarity, then refine each to its single best sentence.
+
+    Two embedding passes:
+      1. Question vs. every chunk to find the top-k coarse hits.
+      2. Question vs. every sentence inside those top-k chunks to pick a tight
+         anchor for highlighting.
+
+    Falls back to the raw chunk text if a chunk can't be sentence-split.
+    """
     settings = get_settings()
     try:
-        chunks = chunk_text(page_text, max_words=settings.max_chunk_words, overlap_words=settings.overlap_words)
+        chunks = chunk_text(
+            page_text,
+            max_words=settings.max_chunk_words,
+            overlap_words=settings.overlap_words,
+        )
         if not chunks:
             return []
-        texts = [question, *[c.text for c in chunks]]
-        embeddings = embed_texts(texts)
-        scores = np.dot(embeddings[1:], embeddings[0])
-        top_indices = np.argsort(scores)[::-1][:top_k]
-        sources: list[QASource] = []
-        for i in top_indices:
-            if scores[i] <= 0.3:
+
+        chunk_inputs = [question, *[c.text for c in chunks]]
+        chunk_embeddings = embed_texts(chunk_inputs)
+        question_emb = chunk_embeddings[0]
+        chunk_scores = np.dot(chunk_embeddings[1:], question_emb)
+        top_indices = [
+            int(i) for i in np.argsort(chunk_scores)[::-1][:top_k]
+            if chunk_scores[int(i)] > 0.3
+        ]
+        if not top_indices:
+            return []
+
+        sentence_pool: list[str] = []
+        slices: list[tuple[int, int, int]] = []  # (chunk_idx, start, end)
+        for chunk_idx in top_indices:
+            sentences = _split_sentences(chunks[chunk_idx].text)
+            if not sentences:
+                slices.append((chunk_idx, -1, -1))
                 continue
-            prefix, suffix = extract_anchors(chunks[i].text, settings.qa_anchor_words)
+            start = len(sentence_pool)
+            sentence_pool.extend(sentences)
+            slices.append((chunk_idx, start, len(sentence_pool)))
+
+        sentence_scores = (
+            np.dot(embed_texts(sentence_pool), question_emb)
+            if sentence_pool
+            else np.empty(0)
+        )
+
+        sources: list[QASource] = []
+        for chunk_idx, start, end in slices:
+            chunk = chunks[chunk_idx]
+            chunk_score = float(chunk_scores[chunk_idx])
+            if start < 0:
+                text_value = chunk.text
+            else:
+                local = sentence_scores[start:end]
+                best = int(np.argmax(local))
+                text_value = sentence_pool[start + best]
+            prefix, suffix = extract_anchors(text_value, settings.qa_anchor_words)
             sources.append(
                 QASource(
-                    text=chunks[i].text,
-                    score=round(float(scores[i]), 4),
-                    chunk_id=chunks[i].chunk_id,
+                    text=text_value,
+                    score=round(chunk_score, 4),
+                    chunk_id=chunk.chunk_id,
                     prefix=prefix,
                     suffix=suffix,
                 )
