@@ -6,7 +6,7 @@ import pytest
 from fastapi import HTTPException
 
 from app import qa
-from app.qa import PageCache, answer_question
+from app.qa import PageCache, answer_question, extract_anchors
 from app.schemas import QAMessage
 
 
@@ -22,6 +22,7 @@ SETTINGS = SimpleNamespace(
     qa_page_cache_size=16,
     max_chunk_words=850,
     overlap_words=125,
+    qa_anchor_words=8,
 )
 
 
@@ -43,6 +44,30 @@ def _mock_chat_response(content: str = "Short answer.", status_code: int = 200):
     }
     response.text = content
     return response
+
+
+def test_extract_anchors_short_chunk_returns_full_text():
+    prefix, suffix = extract_anchors("only four short words", anchor_words=8)
+    assert prefix == "only four short words"
+    assert suffix == "only four short words"
+
+
+def test_extract_anchors_long_chunk_returns_first_and_last_n_words():
+    chunk = " ".join(f"w{index}" for index in range(20))
+    prefix, suffix = extract_anchors(chunk, anchor_words=5)
+    assert prefix == "w0 w1 w2 w3 w4"
+    assert suffix == "w15 w16 w17 w18 w19"
+
+
+def test_extract_anchors_empty_chunk():
+    assert extract_anchors("", anchor_words=8) == ("", "")
+
+
+def test_extract_anchors_collapses_whitespace():
+    # split() handles arbitrary whitespace runs, so anchors are space-normalized.
+    prefix, suffix = extract_anchors("  alpha\n\nbeta\tgamma   delta  ", anchor_words=2)
+    assert prefix == "alpha beta"
+    assert suffix == "gamma delta"
 
 
 def test_page_cache_lru_eviction():

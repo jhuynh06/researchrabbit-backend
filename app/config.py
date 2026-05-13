@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     qa_max_page_chars: int = 60000
     qa_max_history_messages: int = 12
     qa_page_cache_size: int = 128
+    qa_anchor_words: int = 8
 
 
 @lru_cache

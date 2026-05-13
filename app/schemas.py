@@ -59,6 +59,9 @@ class QARequest(BaseModel):
 class QASource(BaseModel):
     text: str
     score: float
+    chunk_id: int
+    prefix: str
+    suffix: str
 
 
 class QAResponse(BaseModel):

@@ -227,6 +227,24 @@ def answer_question(
     return answer, was_cached, sources
 
 
+def extract_anchors(chunk_text_value: str, anchor_words: int) -> tuple[str, str]:
+    """Return (prefix, suffix) — the first and last N words of the chunk.
+
+    Used by the extension as DOM-search anchors: short enough to stay inside a
+    single text node (so substring search succeeds), and used as the start/end
+    of a Range so the highlight spans the full chunk even across element
+    boundaries. When the chunk is shorter than N words, prefix == suffix.
+    """
+    words = chunk_text_value.split()
+    if not words:
+        return "", ""
+    n = max(1, anchor_words)
+    if len(words) <= n:
+        joined = " ".join(words)
+        return joined, joined
+    return " ".join(words[:n]), " ".join(words[-n:])
+
+
 def _find_sources(question: str, page_text: str, top_k: int = 3) -> list[QASource]:
     """Find the chunks most relevant to the question via embedding similarity."""
     settings = get_settings()
@@ -238,11 +256,21 @@ def _find_sources(question: str, page_text: str, top_k: int = 3) -> list[QASourc
         embeddings = embed_texts(texts)
         scores = np.dot(embeddings[1:], embeddings[0])
         top_indices = np.argsort(scores)[::-1][:top_k]
-        return [
-            QASource(text=chunks[i].text, score=round(float(scores[i]), 4))
-            for i in top_indices
-            if scores[i] > 0.3
-        ]
+        sources: list[QASource] = []
+        for i in top_indices:
+            if scores[i] <= 0.3:
+                continue
+            prefix, suffix = extract_anchors(chunks[i].text, settings.qa_anchor_words)
+            sources.append(
+                QASource(
+                    text=chunks[i].text,
+                    score=round(float(scores[i]), 4),
+                    chunk_id=chunks[i].chunk_id,
+                    prefix=prefix,
+                    suffix=suffix,
+                )
+            )
+        return sources
     except Exception:
         logger.exception("Failed to find sources")
         return []
