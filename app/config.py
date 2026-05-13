@@ -25,6 +25,10 @@ class Settings(BaseSettings):
     qa_max_history_messages: int = 12
     qa_page_cache_size: int = 128
     qa_anchor_words: int = 8
+    # How many neighbor sentences to keep on each side of the best-matching
+    # sentence when building a citation passage. 0 = single sentence (tight),
+    # 2 = ~5 sentences (paragraph-sized).
+    qa_passage_neighbors: int = 2
 
 
 @lru_cache

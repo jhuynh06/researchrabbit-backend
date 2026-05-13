@@ -63,6 +63,7 @@ def rank_chunks(prompt: str, page_text: str, top_k: int | None = None) -> list[R
         else np.empty(0)
     )
 
+    neighbors = max(0, getattr(settings, "qa_passage_neighbors", 2))
     results: list[RankedChunk] = []
     for rank_pos, (chunk_idx, (sent_start, sent_end)) in enumerate(
         zip(ranked_indexes, slices), start=1
@@ -70,9 +71,12 @@ def rank_chunks(prompt: str, page_text: str, top_k: int | None = None) -> list[R
         if sent_start < 0:
             text_value = chunks[chunk_idx].text
         else:
+            chunk_sentences = sentence_pool[sent_start:sent_end]
             local = sentence_scores[sent_start:sent_end]
             best = int(np.argmax(local))
-            text_value = sentence_pool[sent_start + best]
+            win_start = max(0, best - neighbors)
+            win_end = min(len(chunk_sentences), best + neighbors + 1)
+            text_value = " ".join(chunk_sentences[win_start:win_end])
         prefix, suffix = extract_anchors(text_value, settings.qa_anchor_words)
         results.append(
             RankedChunk(

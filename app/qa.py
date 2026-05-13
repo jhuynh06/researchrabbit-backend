@@ -397,6 +397,7 @@ def _find_sources(question: str, page_text: str, top_k: int = 3) -> list[QASourc
             else np.empty(0)
         )
 
+        neighbors = max(0, settings.qa_passage_neighbors)
         sources: list[QASource] = []
         for chunk_idx, start, end in slices:
             chunk = chunks[chunk_idx]
@@ -404,9 +405,12 @@ def _find_sources(question: str, page_text: str, top_k: int = 3) -> list[QASourc
             if start < 0:
                 text_value = chunk.text
             else:
+                chunk_sentences = sentence_pool[start:end]
                 local = sentence_scores[start:end]
                 best = int(np.argmax(local))
-                text_value = sentence_pool[start + best]
+                win_start = max(0, best - neighbors)
+                win_end = min(len(chunk_sentences), best + neighbors + 1)
+                text_value = " ".join(chunk_sentences[win_start:win_end])
             prefix, suffix = extract_anchors(text_value, settings.qa_anchor_words)
             sources.append(
                 QASource(
