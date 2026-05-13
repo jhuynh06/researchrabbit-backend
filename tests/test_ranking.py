@@ -20,14 +20,21 @@ def _mock_embed_response(texts):
 
 
 def test_rank_chunks_sorts_by_similarity(monkeypatch) -> None:
+    # First call: prompt + 2 chunks. Second call: sentences from the top chunks
+    # (for sentence-level refinement). Score the "dataset" sentence as the
+    # closest match to the prompt vector [1.0, 0.0].
     def fake_embed_texts(texts: list[str]) -> np.ndarray:
-        assert texts[0] == "dataset"
+        if texts and texts[0] == "dataset":
+            return np.array(
+                [
+                    [1.0, 0.0],
+                    [0.1, 0.9],
+                    [0.9, 0.1],
+                ]
+            )
+        # Sentence-refinement call: one row per sentence, score by keyword.
         return np.array(
-            [
-                [1.0, 0.0],
-                [0.1, 0.9],
-                [0.9, 0.1],
-            ]
+            [[0.9, 0.1] if "dataset" in t else [0.1, 0.9] for t in texts]
         )
 
     monkeypatch.setattr("app.ranking.embed_texts", fake_embed_texts)
@@ -39,6 +46,7 @@ def test_rank_chunks_sorts_by_similarity(monkeypatch) -> None:
             default_top_k=5,
             max_top_k=10,
             candidate_explanation="Highest semantic match to the prompt.",
+            qa_anchor_words=8,
         ),
     )
     page_text = "Background information about theory.\n\nThe dataset contains clinical records."

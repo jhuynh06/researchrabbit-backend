@@ -20,6 +20,8 @@ class RankedChunk(BaseModel):
     score: float
     text: str
     explanation: str
+    prefix: str = ""
+    suffix: str = ""
 
 
 class RankChunksResponse(BaseModel):
